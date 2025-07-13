@@ -11,6 +11,15 @@ from funzioni import (
 )
 from datetime import datetime
 from scipy.stats import gaussian_kde
+import gc
+
+def cleanup_matplotlib():
+    """Comprehensive matplotlib cleanup"""
+    try:
+        plt.close('all')
+        gc.collect()
+    except Exception:
+        pass
 
 
 ######## INPUT!##########
@@ -186,6 +195,12 @@ ax5.set_xlim(x_min, x_max)
 # === Finalizza layout ===
 plt.tight_layout()
 plt.show()
+
+# Cleanup matplotlib
+cleanup_matplotlib()
+
+# Cleanup matplotlib
+cleanup_matplotlib()
 
 
 #############################

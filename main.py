@@ -16,10 +16,103 @@ from scipy.stats import gaussian_kde
 import matplotlib.gridspec as gridspec
 import base64
 import io
+import gc
+import contextlib
+import weakref
 from pairs_trading.funzioni import analisi_comparata_completa_con_asimmetria_graduale, analisi_statistiche
 from options_utils import black_scholes, black_scholes_greeks
 
 app = FastAPI(title="Stock Analysis API", description="API for stock analysis and cointegration", version="1.0.0")
+
+# Track figures for cleanup
+_active_figures = weakref.WeakSet()
+
+@contextlib.contextmanager
+def safe_figure_context(*args, **kwargs):
+    """Context manager for safe figure creation and cleanup"""
+    fig = None
+    try:
+        fig = plt.figure(*args, **kwargs)
+        _active_figures.add(fig)
+        yield fig
+    except Exception as e:
+        if fig is not None:
+            plt.close(fig)
+        raise
+    finally:
+        if fig is not None:
+            plt.close(fig)
+        cleanup_matplotlib()
+
+@contextlib.contextmanager
+def safe_subplots_context(*args, **kwargs):
+    """Context manager for safe subplots creation and cleanup"""
+    fig = None
+    axes = None
+    try:
+        fig, axes = plt.subplots(*args, **kwargs)
+        _active_figures.add(fig)
+        yield fig, axes
+    except Exception as e:
+        if fig is not None:
+            plt.close(fig)
+        raise
+    finally:
+        if fig is not None:
+            plt.close(fig)
+        cleanup_matplotlib()
+
+def cleanup_matplotlib():
+    """Comprehensive matplotlib cleanup"""
+    try:
+        # Close all figures
+        plt.close('all')
+        
+        # Clear any remaining figures from the figure manager
+        try:
+            import matplotlib._pylab_helpers as pylab_helpers
+            if hasattr(pylab_helpers, 'Gcf'):
+                pylab_helpers.Gcf.destroy_all()
+        except ImportError:
+            pass
+        
+        # Clear matplotlib cache
+        if hasattr(plt, 'rcdefaults'):
+            plt.rcdefaults()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear seaborn cache if available
+        try:
+            import seaborn as sns
+            if hasattr(sns, 'reset_defaults'):
+                sns.reset_defaults()
+        except:
+            pass
+            
+    except Exception:
+        # Silently ignore cleanup errors
+        pass
+
+def safe_plot_to_base64(fig):
+    """Convert matplotlib figure to base64 string with safe cleanup"""
+    buffer = None
+    try:
+        with io.BytesIO() as buffer:
+            fig.savefig(buffer, format='png', dpi=150, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            return image_base64
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate plot: {str(e)}")
+    finally:
+        if fig is not None:
+            plt.close(fig)
+        if buffer is not None:
+            buffer.close()
+        cleanup_matplotlib()
 
 # Configure CORS
 app.add_middleware(
@@ -84,17 +177,6 @@ def download_stock_data(stocks, start_date, end_date, period="1d"):
         raise HTTPException(status_code=400, detail=f"Failed to download data for {stocks}")
     return data
 
-def plot_to_base64(fig):
-    """Convert matplotlib figure to base64 string"""
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format='png', dpi=150, bbox_inches='tight', 
-                facecolor='white', edgecolor='none')
-    buffer.seek(0)
-    image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-    plt.close(fig)
-    buffer.close()
-    return image_base64
-
 
 
 @app.get("/")
@@ -110,6 +192,58 @@ async def health_check():
 async def readiness_check():
     """Readiness probe for container orchestration"""
     return {"status": "ready", "service": "Stock Analysis API"}
+
+@app.get("/memory/status")
+async def memory_status():
+    """Get memory usage and matplotlib figure status"""
+    try:
+        import psutil
+        import os
+        
+        # Get process memory info
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        
+        # Get matplotlib figure count
+        fig_count = len(plt.get_fignums())
+        
+        # Get active figures count from our tracking
+        active_figs = len(_active_figures)
+        
+        return {
+            "memory_mb": memory_info.rss / 1024 / 1024,
+            "virtual_memory_mb": memory_info.vms / 1024 / 1024,
+            "matplotlib_figures": fig_count,
+            "tracked_figures": active_figs,
+            "status": "healthy" if fig_count == 0 else "warning"
+        }
+    except ImportError:
+        return {
+            "memory_mb": "unavailable",
+            "virtual_memory_mb": "unavailable",
+            "matplotlib_figures": len(plt.get_fignums()),
+            "tracked_figures": len(_active_figures),
+            "status": "partial"
+        }
+
+@app.post("/memory/cleanup")
+async def force_cleanup():
+    """Force comprehensive cleanup of matplotlib resources"""
+    try:
+        initial_figs = len(plt.get_fignums())
+        cleanup_matplotlib()
+        final_figs = len(plt.get_fignums())
+        
+        return {
+            "status": "success",
+            "figures_closed": initial_figs - final_figs,
+            "remaining_figures": final_figs
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 @app.post("/analysis/comparative")
 async def comparative_analysis(request: StockAnalysisRequest):
@@ -200,70 +334,70 @@ async def generate_visualizations(request: StockAnalysisRequest):
         y_ret_max = max(log_returns1.max(), log_returns2.max())
         ret_margin = 0.05 * (y_ret_max - y_ret_min)
         
-        # Create comprehensive plot
+        # Create comprehensive plot with safe context
         plt.style.use('default')
-        fig = plt.figure(figsize=(18, 16), dpi=100)
-        gs = gridspec.GridSpec(4, 2, height_ratios=[1, 1, 1, 1])
-        
-        # Row 1: Prices with dual axis
-        ax0 = plt.subplot(gs[0, :])
-        ax0b = ax0.twinx()
-        l1, = ax0.plot(close1, color='blue', label=request.stocks1[0])
-        l2, = ax0b.plot(close2, color='red', label=request.stocks2[0])
-        ax0.set_ylabel(request.stocks1[0], color='blue')
-        ax0.tick_params(axis='y', labelcolor='blue')
-        ax0b.set_ylabel(request.stocks2[0], color='red')
-        ax0b.tick_params(axis='y', labelcolor='red')
-        ax0.set_title(f'Prices {request.stocks1[0]} (left) & {request.stocks2[0]} (right)')
-        ax0.set_xlabel('Date')
-        ax0.legend([l1, l2], [request.stocks1[0], request.stocks2[0]], loc='upper left')
-        
-        # Row 2: Moving correlations
-        ax1 = plt.subplot(gs[1, :])
-        ax1.plot(smooth_corr_60, label='60d', color='red')
-        ax1.plot(smooth_corr_120, label='120d', color='green')
-        ax1.plot(smooth_corr_240, label='240d', color='blue')
-        ax1.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-        ax1.set_title(f'Moving Correlations between {request.stocks1[0]} and {request.stocks2[0]}')
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Correlation')
-        ax1.legend()
-        ax1.grid(True)
-        
-        # Row 3: Log returns
-        ax2 = plt.subplot(gs[2, 0])
-        ax2.plot(log_returns1.index, log_returns1, color='blue')
-        ax2.set_title(f'Log Returns {request.stocks1[0]}')
-        ax2.set_xlabel('Date')
-        ax2.set_ylabel('Log Return')
-        ax2.set_ylim(y_ret_min - ret_margin, y_ret_max + ret_margin)
-        ax2.grid(True)
-        
-        ax3 = plt.subplot(gs[2, 1])
-        ax3.plot(log_returns2.index, log_returns2, color='red')
-        ax3.set_title(f'Log Returns {request.stocks2[0]}')
-        ax3.set_xlabel('Date')
-        ax3.set_ylabel('Log Return')
-        ax3.set_ylim(y_ret_min - ret_margin, y_ret_max + ret_margin)
-        ax3.grid(True)
-        
-        # Row 4: Distributions
-        ax4 = plt.subplot(gs[3, 0])
-        sns.histplot(log_returns1, bins=30, kde=True, color='blue', stat='density', ax=ax4)
-        ax4.set_title(f'Distribution Log Returns {request.stocks1[0]}')
-        ax4.set_ylim(0, density_max * 1.1)
-        ax4.set_xlim(x_min, x_max)
-        
-        ax5 = plt.subplot(gs[3, 1])
-        sns.histplot(log_returns2, bins=30, kde=True, color='red', stat='density', ax=ax5)
-        ax5.set_title(f'Distribution Log Returns {request.stocks2[0]}')
-        ax5.set_ylim(0, density_max * 1.1)
-        ax5.set_xlim(x_min, x_max)
-        
-        plt.tight_layout()
-        
-        # Convert to base64
-        visualization_base64 = plot_to_base64(fig)
+        with safe_figure_context(figsize=(18, 16), dpi=100) as fig:
+            gs = gridspec.GridSpec(4, 2, height_ratios=[1, 1, 1, 1])
+            
+            # Row 1: Prices with dual axis
+            ax0 = plt.subplot(gs[0, :])
+            ax0b = ax0.twinx()
+            l1, = ax0.plot(close1, color='blue', label=request.stocks1[0])
+            l2, = ax0b.plot(close2, color='red', label=request.stocks2[0])
+            ax0.set_ylabel(request.stocks1[0], color='blue')
+            ax0.tick_params(axis='y', labelcolor='blue')
+            ax0b.set_ylabel(request.stocks2[0], color='red')
+            ax0b.tick_params(axis='y', labelcolor='red')
+            ax0.set_title(f'Prices {request.stocks1[0]} (left) & {request.stocks2[0]} (right)')
+            ax0.set_xlabel('Date')
+            ax0.legend([l1, l2], [request.stocks1[0], request.stocks2[0]], loc='upper left')
+            
+            # Row 2: Moving correlations
+            ax1 = plt.subplot(gs[1, :])
+            ax1.plot(smooth_corr_60, label='60d', color='red')
+            ax1.plot(smooth_corr_120, label='120d', color='green')
+            ax1.plot(smooth_corr_240, label='240d', color='blue')
+            ax1.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+            ax1.set_title(f'Moving Correlations between {request.stocks1[0]} and {request.stocks2[0]}')
+            ax1.set_xlabel('Date')
+            ax1.set_ylabel('Correlation')
+            ax1.legend()
+            ax1.grid(True)
+            
+            # Row 3: Log returns
+            ax2 = plt.subplot(gs[2, 0])
+            ax2.plot(log_returns1.index, log_returns1, color='blue')
+            ax2.set_title(f'Log Returns {request.stocks1[0]}')
+            ax2.set_xlabel('Date')
+            ax2.set_ylabel('Log Return')
+            ax2.set_ylim(y_ret_min - ret_margin, y_ret_max + ret_margin)
+            ax2.grid(True)
+            
+            ax3 = plt.subplot(gs[2, 1])
+            ax3.plot(log_returns2.index, log_returns2, color='red')
+            ax3.set_title(f'Log Returns {request.stocks2[0]}')
+            ax3.set_xlabel('Date')
+            ax3.set_ylabel('Log Return')
+            ax3.set_ylim(y_ret_min - ret_margin, y_ret_max + ret_margin)
+            ax3.grid(True)
+            
+            # Row 4: Distributions
+            ax4 = plt.subplot(gs[3, 0])
+            sns.histplot(log_returns1, bins=30, kde=True, color='blue', stat='density', ax=ax4)
+            ax4.set_title(f'Distribution Log Returns {request.stocks1[0]}')
+            ax4.set_ylim(0, density_max * 1.1)
+            ax4.set_xlim(x_min, x_max)
+            
+            ax5 = plt.subplot(gs[3, 1])
+            sns.histplot(log_returns2, bins=30, kde=True, color='red', stat='density', ax=ax5)
+            ax5.set_title(f'Distribution Log Returns {request.stocks2[0]}')
+            ax5.set_ylim(0, density_max * 1.1)
+            ax5.set_xlim(x_min, x_max)
+            
+            plt.tight_layout()
+            
+            # Convert to base64
+            visualization_base64 = safe_plot_to_base64(fig)
         
         return {
             "visualization": visualization_base64,
@@ -272,7 +406,10 @@ async def generate_visualizations(request: StockAnalysisRequest):
         }
         
     except Exception as e:
+        cleanup_matplotlib()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cleanup_matplotlib()
 
 @app.post("/analysis/cointegration")
 async def cointegration_analysis(request: CointegrationRequest):
@@ -342,9 +479,9 @@ async def cointegration_analysis(request: CointegrationRequest):
                 "adf_statistic": adf_result1[0],
                 "adf_p_value": adf_result1[1],
                 "adf_critical_values": {
-                    "1%": adf_result1[4]["1%"],
-                    "5%": adf_result1[4]["5%"],
-                    "10%": adf_result1[4]["10%"]
+                    "1%": adf_result1[4].get("1%", None) if len(adf_result1) > 4 else None,
+                    "5%": adf_result1[4].get("5%", None) if len(adf_result1) > 4 else None,
+                    "10%": adf_result1[4].get("10%", None) if len(adf_result1) > 4 else None
                 }
             },
             "regression_2": {
@@ -354,9 +491,9 @@ async def cointegration_analysis(request: CointegrationRequest):
                 "adf_statistic": adf_result2[0],
                 "adf_p_value": adf_result2[1],
                 "adf_critical_values": {
-                    "1%": adf_result2[4]["1%"],
-                    "5%": adf_result2[4]["5%"],
-                    "10%": adf_result2[4]["10%"]
+                    "1%": adf_result2[4].get("1%", None) if len(adf_result2) > 4 else None,
+                    "5%": adf_result2[4].get("5%", None) if len(adf_result2) > 4 else None,
+                    "10%": adf_result2[4].get("10%", None) if len(adf_result2) > 4 else None
                 }
             }
         }
@@ -398,71 +535,69 @@ async def cointegration_plots(request: CointegrationRequest):
         
         # Plot 1: Regression 1
         plt.style.use('default')
-        fig1, axs1 = plt.subplots(3, 1, figsize=(10, 12), dpi=100)
-        
-        axs1[0].scatter(close1, close2, alpha=0.5, label='Data')
-        axs1[0].plot(close1, y1_pred, color='red', label='Regression')
-        axs1[0].set_title(f'{request.stocks2[0]} ~ {request.stocks1[0]} - Regression')
-        axs1[0].set_xlabel(f'Price {request.stocks1[0]}')
-        axs1[0].set_ylabel(f'Price {request.stocks2[0]}')
-        axs1[0].legend()
-        axs1[0].grid(True)
-        axs1[0].text(0.95, 0.05, f'R² = {r2_1:.2f}', transform=axs1[0].transAxes,
-                     fontsize=12, verticalalignment='bottom', horizontalalignment='right',
-                     bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray'))
-        
-        axs1[1].scatter(close1, residuals1, alpha=0.5, label='Residuals')
-        axs1[1].axhline(0, color='red', linestyle='--')
-        axs1[1].set_title(f'Residuals - {request.stocks2[0]} ~ {request.stocks1[0]}')
-        axs1[1].set_xlabel(f'Price {request.stocks1[0]}')
-        axs1[1].set_ylabel('Residual')
-        axs1[1].legend()
-        axs1[1].grid(True)
-        
-        axs1[2].plot(close1.index, residuals1, label='Residuals', color='purple')
-        axs1[2].axhline(0, color='red', linestyle='--')
-        axs1[2].set_title('Time series of residuals')
-        axs1[2].set_xlabel('Date')
-        axs1[2].set_ylabel('Residual')
-        axs1[2].legend()
-        axs1[2].grid(True)
-        
-        plt.tight_layout()
-        plot1_base64 = plot_to_base64(fig1)
+        with safe_subplots_context(3, 1, figsize=(10, 12), dpi=100) as (fig1, axs1):
+            axs1[0].scatter(close1, close2, alpha=0.5, label='Data')
+            axs1[0].plot(close1, y1_pred, color='red', label='Regression')
+            axs1[0].set_title(f'{request.stocks2[0]} ~ {request.stocks1[0]} - Regression')
+            axs1[0].set_xlabel(f'Price {request.stocks1[0]}')
+            axs1[0].set_ylabel(f'Price {request.stocks2[0]}')
+            axs1[0].legend()
+            axs1[0].grid(True)
+            axs1[0].text(0.95, 0.05, f'R² = {r2_1:.2f}', transform=axs1[0].transAxes,
+                         fontsize=12, verticalalignment='bottom', horizontalalignment='right',
+                         bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray'))
+            
+            axs1[1].scatter(close1, residuals1, alpha=0.5, label='Residuals')
+            axs1[1].axhline(0, color='red', linestyle='--')
+            axs1[1].set_title(f'Residuals - {request.stocks2[0]} ~ {request.stocks1[0]}')
+            axs1[1].set_xlabel(f'Price {request.stocks1[0]}')
+            axs1[1].set_ylabel('Residual')
+            axs1[1].legend()
+            axs1[1].grid(True)
+            
+            axs1[2].plot(close1.index, residuals1, label='Residuals', color='purple')
+            axs1[2].axhline(0, color='red', linestyle='--')
+            axs1[2].set_title('Time series of residuals')
+            axs1[2].set_xlabel('Date')
+            axs1[2].set_ylabel('Residual')
+            axs1[2].legend()
+            axs1[2].grid(True)
+            
+            plt.tight_layout()
+            plot1_base64 = safe_plot_to_base64(fig1)
         
         # Plot 2: Regression 2
         plt.style.use('default')
-        fig2, axs2 = plt.subplots(3, 1, figsize=(10, 12), dpi=100)
-        
-        axs2[0].scatter(close2, close1, alpha=0.5, label='Data')
-        axs2[0].plot(close2, y2_pred, color='blue', label='Regression')
-        axs2[0].set_title(f'{request.stocks1[0]} ~ {request.stocks2[0]} - Regression')
-        axs2[0].set_xlabel(f'Price {request.stocks2[0]}')
-        axs2[0].set_ylabel(f'Price {request.stocks1[0]}')
-        axs2[0].legend()
-        axs2[0].grid(True)
-        axs2[0].text(0.95, 0.05, f'R² = {r2_2:.2f}', transform=axs2[0].transAxes,
-                     fontsize=12, verticalalignment='bottom', horizontalalignment='right',
-                     bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray'))
-        
-        axs2[1].scatter(close2, residuals2, alpha=0.5, label='Residuals')
-        axs2[1].axhline(0, color='red', linestyle='--')
-        axs2[1].set_title(f'Residuals - {request.stocks1[0]} ~ {request.stocks2[0]}')
-        axs2[1].set_xlabel(f'Price {request.stocks2[0]}')
-        axs2[1].set_ylabel('Residual')
-        axs2[1].legend()
-        axs2[1].grid(True)
-        
-        axs2[2].plot(close2.index, residuals2, label='Residuals', color='green')
-        axs2[2].axhline(0, color='red', linestyle='--')
-        axs2[2].set_title(f'Time series of residuals - {request.stocks1[0]} ~ {request.stocks2[0]}')
-        axs2[2].set_xlabel('Date')
-        axs2[2].set_ylabel('Residual')
-        axs2[2].legend()
-        axs2[2].grid(True)
-        
-        plt.tight_layout()
-        plot2_base64 = plot_to_base64(fig2)
+        with safe_subplots_context(3, 1, figsize=(10, 12), dpi=100) as (fig2, axs2):
+            axs2[0].scatter(close2, close1, alpha=0.5, label='Data')
+            axs2[0].plot(close2, y2_pred, color='blue', label='Regression')
+            axs2[0].set_title(f'{request.stocks1[0]} ~ {request.stocks2[0]} - Regression')
+            axs2[0].set_xlabel(f'Price {request.stocks2[0]}')
+            axs2[0].set_ylabel(f'Price {request.stocks1[0]}')
+            axs2[0].legend()
+            axs2[0].grid(True)
+            axs2[0].text(0.95, 0.05, f'R² = {r2_2:.2f}', transform=axs2[0].transAxes,
+                         fontsize=12, verticalalignment='bottom', horizontalalignment='right',
+                         bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray'))
+            
+            axs2[1].scatter(close2, residuals2, alpha=0.5, label='Residuals')
+            axs2[1].axhline(0, color='red', linestyle='--')
+            axs2[1].set_title(f'Residuals - {request.stocks1[0]} ~ {request.stocks2[0]}')
+            axs2[1].set_xlabel(f'Price {request.stocks2[0]}')
+            axs2[1].set_ylabel('Residual')
+            axs2[1].legend()
+            axs2[1].grid(True)
+            
+            axs2[2].plot(close2.index, residuals2, label='Residuals', color='green')
+            axs2[2].axhline(0, color='red', linestyle='--')
+            axs2[2].set_title(f'Time series of residuals - {request.stocks1[0]} ~ {request.stocks2[0]}')
+            axs2[2].set_xlabel('Date')
+            axs2[2].set_ylabel('Residual')
+            axs2[2].legend()
+            axs2[2].grid(True)
+            
+            plt.tight_layout()
+            plot2_base64 = safe_plot_to_base64(fig2)
         
         return {
             "regression_plots": {
@@ -481,7 +616,10 @@ async def cointegration_plots(request: CointegrationRequest):
         }
         
     except Exception as e:
+        cleanup_matplotlib()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cleanup_matplotlib()
 
 @app.post("/company/info")
 async def get_company_info(request: CompanyInfoRequest):
@@ -665,6 +803,9 @@ async def simulate_options_strategy(request: OptionsStrategyRequest):
 if __name__ == "__main__":
     import uvicorn
     import os
+    
+    # Initial cleanup
+    cleanup_matplotlib()
     
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port) 

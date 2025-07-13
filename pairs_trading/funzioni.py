@@ -187,3 +187,7 @@ def analisi_statistiche_TAB(
         print(f"📁 Tabella salvata come immagine: {nome_file}")
     else:
         plt.show()
+    
+    # Cleanup matplotlib
+    plt.close(fig)
+    plt.close('all')
