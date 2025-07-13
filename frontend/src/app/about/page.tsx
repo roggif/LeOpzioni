@@ -47,8 +47,8 @@ export default function AboutPage() {
         <p className="text-lg text-gray-700 mb-4">
           His Italian-language master&apos;s thesis—focused on pairs trading and a statistical study for options trading implemented in Python—is available for download, completely open source, on his GitHub repository at the following link:
         </p>
-        <Link href="https://github.com/gabri035/LeOpzioni" target="_blank" className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200">
-          LeOpzioni
+        <Link href="https://github.com/gabri035/Le-Opzioni-OPLY/tree/main" target="_blank" className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200">
+          Le Opzioni
         </Link>
       </div>
     </div>
