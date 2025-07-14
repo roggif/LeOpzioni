@@ -208,3 +208,31 @@ __marimo__/
 
 .DS_Store
 .vercel
+
+# Next.js
+.next/
+out/
+node_modules/
+*.tsbuildinfo
+next-env.d.ts
+
+# Node.js
+.npm
+.yarn-integrity
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Environment variables
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Build outputs
+build/
+dist/

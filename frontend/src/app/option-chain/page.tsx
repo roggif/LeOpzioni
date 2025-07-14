@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { apiService, OptionChainRequest } from '@/lib/api';
+import { apiService, OptionChainRequest } from '@/api/api';
 import { BarChart3, Search, Loader2 } from 'lucide-react';
 
 interface OptionInfo {

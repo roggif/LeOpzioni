@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { apiService, StockAnalysisRequest } from '@/lib/api';
+import { apiService, StockAnalysisRequest } from '@/api/api';
 import { TrendingUp, BarChart2, ArrowRight, Loader2 } from 'lucide-react';
 import Image from 'next/image';
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { apiService, OptionLeg, OptionsStrategyRequest } from '@/lib/api';
+import { apiService, OptionLeg, OptionsStrategyRequest } from '@/api/api';
 import { Calculator, Plus, Trash2, TrendingUp, Loader2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
