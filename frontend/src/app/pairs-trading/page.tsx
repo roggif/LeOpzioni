@@ -293,7 +293,7 @@ export default function PairsTrading() {
                   <div className="text-sm text-gray-700 lg:flex lg:flex-col lg:h-full">
                     <div className="mb-6 lg:mb-0 lg:flex-1 lg:flex lg:items-center">
                       <p>
-                        The use of a dual-axis chart provides an effective visual representation of the relative dynamics between two time series with different price scales. Specifically, in the context of market-neutral strategies such as pair trading, this type of visualization is useful for identifying cointegration or, more simply, the temporary directional correlation of price movements, regardless of the absolute price levels
+                        The use of a dual-axis chart provides an effective visual representation of the relative dynamics between two time series with different price scales. Specifically, in the context of market-neutral strategies such as pair trading, this type of visualization is useful for identifying cointegration or, more simply, the temporary directional correlation of price movements, regardless of the absolute price levels.
                       </p>
                     </div>
                     <div className="mb-6 lg:mb-0 lg:flex-1 lg:flex lg:items-center">
@@ -303,12 +303,12 @@ export default function PairsTrading() {
                     </div>
                     <div className="mb-6 lg:mb-0 lg:flex-1 lg:flex lg:items-center">
                       <p>
-                        The visualization of log returns enables a direct assessment of the volatility profiles of the two assets. Higher amplitude in return fluctuations corresponds to greater market volatility. Logarithmic returns are employed instead of arithmetic returns because they are time-additive and more suitable for continuous-time stochastic models
+                        The visualization of log returns enables a direct assessment of the volatility profiles of the two assets. Higher amplitude in return fluctuations corresponds to greater market volatility. Logarithmic returns are employed instead of arithmetic returns because they are time-additive and more suitable for continuous-time stochastic models.
                       </p>
                     </div>
                     <div className="lg:flex-1 lg:flex lg:items-center">
                       <p>
-                        An empirical estimate of the probability density function of logarithmic returns enables the analysis of the statistical characteristics of asset return distributions. This allows for the assessment of whether the distribution resembles a Gaussian  shape or exhibits deviations such as asymmetry and heavy tails. A tighter distribution generally indicates lower dispersion in returns, suggesting a more stable and less volatile asset
+                        An empirical estimate of the probability density function of logarithmic returns enables the analysis of the statistical characteristics of asset return distributions. This allows for the assessment of whether the distribution resembles a Gaussian  shape or exhibits deviations such as asymmetry and heavy tails. A tighter distribution generally indicates lower dispersion in returns, suggesting a more stable and less volatile asset.
                       </p>
                     </div>
                   </div>
